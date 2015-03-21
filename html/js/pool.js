@@ -509,16 +509,622 @@
 //            return circles;
 //        }
 
-        var delaunay = new Delaunay(columns);
-        var triangles = delaunay.getTriangles();
-        triangles.forEach(function(triangle) {
-            triangle.draw();
-        });
+//        var delaunay = new Delaunay(columns);
+//        var triangles = delaunay.getTriangles();
+//        triangles.forEach(function(triangle) {
+//            triangle.draw();
+//        });
+//
+//        boardManager.triangles = triangles;
 
-        boardManager.triangles = triangles;
+        var dt = new Triangulation();
+
 
         return circles;
     };
+
+    function Triangulation() {
+        this.triGraph = new Graph();
+
+        // initial points
+        var A = new Pnt(0, 0);
+        var B = new Pnt(WIDTH, 0);
+        var C = new Pnt(WIDTH, HEIGHT);
+        var D = new Pnt(0, HEIGHT);
+        var test = new Pnt(100, 20);
+
+        // triangle ABC
+        var initialTriangle = new Triangle(A, B, C);
+        this.triGraph.add(initialTriangle);
+        this.mostRecent = initialTriangle;
+
+        this.delaunayPlace(test);
+    }
+
+    Triangulation.prototype.size = function() {
+        return this.triGraph.nodeSet().length;
+    };
+
+    Triangulation.prototype.contains = function(triangle) {
+        return isArrayContainsNode(this.triGraph.nodeSet(), triangle);
+    };
+
+    Triangulation.prototype.neighbors = function(triangle) {
+        return this.triGraph.neighbors(triangle);
+    };
+
+    function isArrayContainsNode(array, node) {
+        for (var i = 0; i < array.length; i++) {
+            if (array[i].equals(node)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    Triangulation.prototype.locate = function(point) {
+        var triangle = this.mostRecent;
+        if (!this.contains(triangle)) { triangle = null; }
+
+//        var visited = []; // new HashSet<Triangle>();
+//        while (triangle !== null) {
+//            visited.add(triangle);
+//            var corner = point.isOutside(triangle.toArray([]));
+//            if (corner === null) return triangle;
+//            triangle = this.neighborOpposite(corner, triangle);
+//        }
+
+        // brute force
+
+        var triangles = this.triGraph.nodeSet();
+        for (var i = 0; i < triangles.length; i++) {
+            triangle = triangles[i];
+            if (point.isOutside(triangle.toArray([])) === null) {
+                return triangles[i];
+            }
+        }
+        return null;
+    };
+
+    Triangulation.prototype.delaunayPlace = function(site) {
+        var triangle = this.locate(site);
+
+        var cavity = this.getCavity(site, triangle);
+        this.mostRecent = this.update(site, cavity);
+    };
+
+    Triangulation.prototype.getCavity = function(site, triangle) {
+        var enroached = new Set();
+        var toBeChecked = [];
+        var marked = new Set();
+
+        toBeChecked.push(triangle);
+        marked.add(triangle);
+        while (toBeChecked.length > 0) {
+            triangle = toBeChecked.pop();
+            if (site.vsCircumcircle(triangle.toArray([])) === 1) {
+                continue;
+            }
+            enroached.add(triangle);
+            var neighbors = this.triGraph.neighbors(triangle);
+            for (var i = 0; i < neighbors.length; i++) {
+                var neighbor = neighbors[i];
+                if (marked.contains(neighbor)) {
+                    continue;
+                }
+                marked.add(neighbor);
+                toBeChecked.push(neighbor);
+            }
+        }
+        return enroached;
+    };
+
+    Triangulation.prototype.update = function(site, cavity) {
+        var boundary = new Set();
+        var theTriangles = new Set();
+
+        var cavityElements = cavity.elements();
+        var i, j;
+        var triangle;
+        var vertex;
+        var vertices;
+        // Find boundary facets and adjacent triangles
+        for (i = 0; i < cavityElements.length; i++) {
+            triangle = cavityElements[i];
+            theTriangles.addAll(this.neighbors(triangle));
+            vertices = triangle.toArray();
+            for (j = 0; j < vertices.length; j++) {
+                vertex = vertices[j];
+                var facet = triangle.facetOpposite(vertex);
+                if (boundary.contains(facet)) {
+                    boundary.remove(facet);
+                } else {
+                    boundary.add(facet);
+                }
+            }
+        }
+        theTriangles.removeAll(cavity);        // Adj triangles only
+
+        // Remove the cavity triangles from the triangulation
+        for (i = 0; i < cavityElements.length; i++) {
+            triangle = cavityElements[i];
+            this.triGraph.remove(triangle);
+        }
+
+        // Build each new triangle and add it to the triangulation
+        var newTriangles = new Set();
+        var boundaryElements = boundary.elements();
+        for (i = 0; i < boundaryElements.length; i++) {
+            vertices = boundaryElements[i];
+            vertices.add(site);
+            var tri = new Triangle(vertices);
+            this.triGraph.add(tri);
+            newTriangles.add(tri);
+        }
+
+        // Update the graph links for each new triangle
+        theTriangles.addAll(newTriangles);    // Adj triangle + new triangles
+        var newTranglesElements = newTriangles.elements();
+        for (i = 0; i < newTranglesElements.length; i++) {
+            triangle = newTranglesElements[i];
+            var theTrianglesElements = theTriangles.elements();
+            for (j = 0; j < theTrianglesElements.length; j++) {
+                var other = theTrianglesElements[j];
+                if (triangle.isNeighbor(other)) {
+                    this.triGraph.add2Nodes(triangle, other);
+                }
+            }
+        }
+
+        // Return one of the new triangles
+        return newTriangles.elements()[0];
+    };
+
+    //***
+    function Graph() {
+        this.theNeighbors = new Map();
+    }
+
+    Graph.prototype.add = function(node) {
+        if (this.theNeighbors.containsKey(node)) return;
+        this.theNeighbors.put(node, new Set());
+    };
+
+    Graph.prototype.add2Nodes = function(nodeA, nodeB) {
+        this.theNeighbors.get(nodeA).add(nodeB);
+        this.theNeighbors.get(nodeB).add(nodeA);
+    };
+
+    Graph.prototype.remove = function(node) {
+        if (!this.theNeighbors.containsKey(node)) {
+            return;
+        }
+
+        var keySet = this.theNeighbors.get(node);
+        var elements = keySet.elements();
+        for (var i = 0; i < elements.length; i++) {
+            var neighbor = elements[i];
+            this.theNeighbors.get(neighbor).remove(node);
+        }
+        this.theNeighbors.get(node).clear();
+        this.theNeighbors.remove(node);
+    };
+
+    Graph.prototype.nodeSet = function() {
+        return this.theNeighbors.keySet();
+    };
+
+    Graph.prototype.neighbors = function(node) {
+        return this.theNeighbors.get(node);
+    };
+
+    //***
+    function Triangle(p1, p2, p3) {
+        this.idNumber = null;
+        this.circumcenter = null;
+
+        this.items = new Set();
+
+        if (p1 instanceof Set) {
+            this.items.addAll(p1);
+        } else {
+            this.items.add(p1);
+            this.items.add(p2);
+            this.items.add(p3);
+        }
+
+        this.idNumber = Triangle.idGenerator++;
+    }
+
+    Triangle.prototype.equals = function(o) {
+        return this === o;
+    };
+
+    Triangle.prototype.toArray = function() {
+        return this.items.elements();
+    };
+
+    Triangle.prototype.toString = function() {
+        return "Triangle " + this.idNumber;
+    };
+
+    Triangle.prototype.isNeighbor = function(triangle) {
+        var count = 0;
+        var vertices = this.toArray();
+        for (var i = 0; i < vertices.length; i++) {
+            var vertex = vertices[i];
+            if (!triangle.contains(vertex)) {
+                count++;
+            }
+        }
+        return count === 1;
+    };
+
+    Triangle.prototype.contains = function(vertex) {
+        return this.items.contains(vertex);
+    };
+
+    Triangle.prototype.facetOpposite = function(vertex) {
+        var facet = new Set();
+        facet.addArray(this.toArray());
+        if (!facet.remove(vertex)) {
+            throw "Vertex not in triangle";
+        }
+        return facet;
+    };
+
+    Triangle.idGenerator = 0;
+    Triangle.moreInfo = false;
+
+    //***
+    function Pnt() {
+        var first = arguments[0];
+        if (Object.prototype.toString.call(first) === '[object Array]') {
+            this.coordinates = Array.prototype.slice.call(first);
+        } else {
+            this.coordinates = Array.prototype.slice.call(arguments);
+        }
+    }
+
+    Pnt.prototype.toString = function() {
+        if (this.coordinates.length === 0) {
+            return 'Pnt ()';
+        }
+        var result = 'Pnt(' + this.coordinates[0];
+        for (var i = 1; i < this.coordinates.length; i++) {
+            result += ',' + this.coordinates[i];
+        }
+        result += ')';
+        return result;
+    };
+
+    Pnt.prototype.equals = function(other) {
+        if (this.coordinates.length !== other.coordinates.length) { return false; }
+        for (var i = 0; i < this.coordinates.length; i++) {
+            if (this.coordinates[i] !== other.coordinates[i]) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    Pnt.prototype.dimension = function() {
+        return this.coordinates.length;
+    };
+
+    Pnt.prototype.dimCheck = function(p) {
+        var len = this.coordinates.length;
+        if (len !== p.coordinates.length) {
+            throw 'dimension mismatch';
+        }
+        return len;
+    };
+
+    Pnt.prototype.extend = function() {
+        var coords = Array.prototype.slice.call(arguments);
+        var result = [];
+        this.coordinates.forEach(function(coord) {
+            result.push(coord);
+        });
+        coords.forEach(function(coord) {
+            result.push(coord);
+        });
+        return new Pnt(result);
+    };
+
+    Pnt.prototype.dot = function(p) {
+        var len = this.dimCheck(p);
+        var sum = 0;
+        for (var i = 0; i < len; i++) {
+            sum += this.coordinates[i] * p.coordinates[i];
+        }
+        return sum;
+    };
+
+    Pnt.prototype.vsCircumcircle = function(simplex) {
+        var matrix = [];
+        for (var i = 0; i < simplex.length; i++) {
+            matrix.push(simplex[i].extend(1, simplex[i].dot(simplex[i])));
+        }
+        matrix.push(this.extend(1, this.dot(this)));
+        var d = Pnt.determinant(matrix);
+        var result = (d < 0) ? -1 : ((d > 0) ? +1 : 0);
+        if (Pnt.content(simplex) < 0) { result =-result; }
+        return result;
+    };
+
+    Pnt.content = function(simplex) {
+        var matrix = new Array(simplex.length);
+        var i;
+        for (i = 0; i < matrix.length; i++) {
+            matrix[i] = simplex[i].extend(1);
+        }
+        var fact = 1;
+        for (i = 1; i < matrix.length; i++) {
+            fact = fact*i;
+        }
+        return Pnt.determinant(matrix) / fact;
+    };
+
+    Pnt.prototype.relation = function(simplex) {
+        /* In 2D, we compute the cross of this matrix:
+         *    1   1   1   1
+         *    p0  a0  b0  c0
+         *    p1  a1  b1  c1
+         * where (a, b, c) is the simplex and p is this Pnt. The result is a
+         * vector in which the first coordinate is the signed area (all signed
+         * areas are off by the same constant factor) of the simplex and the
+         * remaining coordinates are the *negated* signed areas for the
+         * simplices in which p is substituted for each of the vertices.
+         * Analogous results occur in higher dimensions.
+         */
+        var dim = simplex.length - 1;
+        if (this.dimension() !== dim)
+            throw "Dimension mismatch";
+
+        /* Create and load the matrix */
+        var matrix = new Array(dim + 1);
+        /* First row */
+        var coords = new Array(dim + 2);
+        var i, j;
+        for (j = 0; j < coords.length; j++) {
+            coords[j] = 1;
+        }
+        matrix[0] = new Pnt(coords);
+        /* Other rows */
+        for (i = 0; i < dim; i++) {
+            coords[0] = this.coordinates[i];
+            for (j = 0; j < simplex.length; j++) {
+                coords[j+1] = simplex[j].coordinates[i];
+            }
+            matrix[i+1] = new Pnt(coords);
+        }
+
+        /* Compute and analyze the vector of areas/volumes/contents */
+        var vector = Pnt.cross(matrix);
+        var content = vector.coordinates[0];
+        var result = new Array(dim + 1);
+        for (i = 0; i < result.length; i++) {
+            var value = vector.coordinates[i+1];
+            if (Math.abs(value) <= 1.0e-6 * Math.abs(content)) result[i] = 0;
+            else if (value < 0) result[i] = -1;
+            else result[i] = 1;
+        }
+        if (content < 0) {
+            for (i = 0; i < result.length; i++) {
+                result[i] = -result[i];
+            }
+        }
+        if (content === 0) {
+            for (i = 0; i < result.length; i++) {
+                result[i] = Math.abs(result[i]);
+            }
+        }
+        return result;
+    };
+
+    Pnt.prototype.isOutside = function(simplex) {
+        var result = this.relation(simplex);
+        for (var i = 0; i < result.length; i++) {
+            if (result[i] > 0) {
+                return simplex[i];
+            }
+        }
+        return null;
+    };
+
+    Pnt.determinant = function(matrix) {
+        if (matrix.length !== matrix[0].dimension()) {
+            throw "Matrix is not square";
+        }
+        var columns = [];
+        for (var i = 0; i < matrix.length; i++) {
+            columns.push(true);
+        }
+
+        try {
+            return Pnt.determinantCol(matrix, 0, columns);
+        } catch (e) {
+            throw "Matrix is wrong shape";
+        }
+    };
+
+    Pnt.determinantCol = function(matrix, row, columns) {
+        if (row === matrix.length) return 1;
+        var sum = 0;
+        var sign = 1;
+        for (var col = 0; col < columns.length; col++) {
+            if (!columns[col]) continue;
+            columns[col] = false;
+            sum += sign * matrix[row].coordinates[col] * Pnt.determinantCol(matrix, row+1, columns);
+            columns[col] = true;
+            sign = -sign;
+        }
+        return sum;
+    };
+
+    Pnt.cross = function(matrix) {
+        var len = matrix.length + 1;
+        if (len !== matrix[0].dimension()) {
+            throw "Dimension mismatch";
+        }
+        var i;
+        var columns = [];
+        for (i = 0; i < len; i++) {
+            columns.push(true);
+        }
+        var result = new Array(len);
+        var sign = 1;
+        try {
+            for (i = 0; i < len; i++) {
+                columns[i] = false;
+                result[i] = sign * Pnt.determinantCol(matrix, 0, columns);
+                columns[i] = true;
+                sign = -sign;
+            }
+        } catch (e) {
+            throw "Matrix is wrong shape";
+        }
+        return new Pnt(result);
+    };
+
+    //*** Map
+    function Map() {
+        this.map = {};
+    }
+
+    Map.prototype.put = function(key, value) {
+        var string = key.toString();
+        this.map[string] = [key, value];
+    };
+
+    Map.prototype.get = function(key) {
+        var string = key.toString();
+        var array = this.map[string];
+        if (typeof array === 'undefined') {
+            return null;
+        }
+        return array[1];
+    };
+
+    Map.prototype.containsKey = function(key) {
+        var strings = Object.keys(this.map);
+        for (var i = 0; i < strings.length; i++) {
+            var string = strings[i];
+            var currKey = this.map[string][0];
+            if (currKey.equals(key)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    Map.prototype.keySet = function() {
+        var keySet = [];
+        var strings = Object.keys(this.map);
+        for (var i = 0; i < strings.length; i++) {
+            var string = strings[i];
+            var currKey = this.map[string][0];
+            keySet.push(currKey);
+        }
+        return keySet;
+    };
+
+    Map.prototype.size = function() {
+        return Object.keys(this.map).length;
+    };
+
+    Map.prototype.remove = function(key) {
+        var value = this.get(key);
+        delete this.map[key.toString()];
+        return value;
+    };
+
+    Map.prototype.clear = function() {
+        this.map = {};
+    };
+
+    //***
+    function Set() {
+        this.map = new Map();
+    }
+
+    Set.prototype.add = function(key) {
+//        if (this.map.containsKey(key)) {
+//            return;
+//        }
+        this.map.put(key, key);
+    };
+
+    Set.prototype.addAll = function(elementSet) {
+        var elements = elementSet.elements();
+        for (var i = 0; i < elements.length; i++) {
+            this.add(elements[i]);
+        }
+    };
+
+    Set.prototype.addArray = function(elements) {
+        for (var i = 0; i < elements.length; i++) {
+            this.add(elements[i]);
+        }
+    };
+
+    Set.prototype.remove = function(key) {
+        return this.map.remove(key);
+    };
+
+    Set.prototype.removeAll = function(keySet) {
+        var elements = keySet.elements();
+        for (var i = 0; i < elements.length; i++) {
+            this.remove(elements[i]);
+        }
+    };
+
+    Set.prototype.elements = function() {
+        return this.map.keySet();
+    };
+
+    Set.prototype.contains = function(key) {
+        return this.map.containsKey(key);
+    };
+
+    Set.prototype.containsAll = function(keySet) {
+        var keys = this.map.keySet();
+        for (var i = 0; i < keys.length; i++) {
+            if (!keySet.contains(keys[i])) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    Set.prototype.equals = function(o) {
+        if (this === o) { return true; }
+        if (this.size() !== o.size()) { return false; }
+        if (this.containsAll(o)) { return true; }
+        return false;
+    };
+
+    Set.prototype.size = function() {
+        return this.map.size();
+    };
+
+    Set.prototype.clear = function() {
+        this.map.clear();
+    };
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     //**** Delaunay triangulation
     function Delaunay(columns) {
@@ -601,48 +1207,48 @@
         this.p2 = p2;
     }
 
-    // always in ccw order
-    function Triangle(p1, p2, p3) {
-        this.p1 = p1;
-        this.p2 = p2;
-        this.p3 = p3;
-        this.points = [p1, p2, p3];
-        this.neighbours = [];
-        this.jsxObjects = [];
-    }
-
-    Triangle.prototype.pointInsideTriangle = function(p) {
-        var a = (this.p1.x - p.x)*(this.p2.y - this.p1.y) - (this.p2.x - this.p1.x)*(this.p1.y - p.y);
-        var b = (this.p2.x - p.x)*(this.p3.y - this.p2.y) - (this.p3.x - this.p2.x)*(this.p2.y - p.y);
-        var c = (this.p3.x - p.x)*(this.p1.y - this.p3.y) - (this.p1.x - this.p3.x)*(this.p3.y - p.y);
-
-        if ((a <= 0 && b <= 0 && c <= 0) || (a >= 0 && b >= 0 && c >= 0)) {
-            return true;
-        }
-
-        return false;
-    };
-
-    Triangle.prototype.setNeighbours = function(tr1, tr2, tr3) {
-        this.neighbours = [tr1, tr2, tr3];
-    };
-
-    Triangle.prototype.draw = function() {
-        var p1 = b.create('point', this.p1.coords, {fixed: true, name: '', visible: false});
-        var p2 = b.create('point', this.p2.coords, {fixed: true, name: '', visible: false});
-        var p3 = b.create('point', this.p3.coords, {fixed: true, name: '', visible: false});
-
-        var l1 = b.create('line', [p1, p2], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
-        var l2 = b.create('line', [p1, p3], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
-        var l3 = b.create('line', [p3, p2], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
-
-        this.jsxObjects = [p1, p2, p3, l1, l2, l3];
-    };
-
-    Triangle.prototype.remove = function() {
-        this.jsxObjects.forEach(function(obj) {
-            b.removeObject(obj);
-        });
-    };
+//    // always in cw order
+//    function Triangle(p1, p2, p3) {
+//        this.p1 = p1;
+//        this.p2 = p2;
+//        this.p3 = p3;
+//        this.points = [p1, p2, p3];
+//        this.neighbours = [];
+//        this.jsxObjects = [];
+//    }
+//
+//    Triangle.prototype.pointInsideTriangle = function(p) {
+//        var a = (this.p1.x - p.x)*(this.p2.y - this.p1.y) - (this.p2.x - this.p1.x)*(this.p1.y - p.y);
+//        var b = (this.p2.x - p.x)*(this.p3.y - this.p2.y) - (this.p3.x - this.p2.x)*(this.p2.y - p.y);
+//        var c = (this.p3.x - p.x)*(this.p1.y - this.p3.y) - (this.p1.x - this.p3.x)*(this.p3.y - p.y);
+//
+//        if ((a <= 0 && b <= 0 && c <= 0) || (a >= 0 && b >= 0 && c >= 0)) {
+//            return true;
+//        }
+//
+//        return false;
+//    };
+//
+//    Triangle.prototype.setNeighbours = function(tr1, tr2, tr3) {
+//        this.neighbours = [tr1, tr2, tr3];
+//    };
+//
+//    Triangle.prototype.draw = function() {
+//        var p1 = b.create('point', this.p1.coords, {fixed: true, name: '', visible: false});
+//        var p2 = b.create('point', this.p2.coords, {fixed: true, name: '', visible: false});
+//        var p3 = b.create('point', this.p3.coords, {fixed: true, name: '', visible: false});
+//
+//        var l1 = b.create('line', [p1, p2], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
+//        var l2 = b.create('line', [p1, p3], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
+//        var l3 = b.create('line', [p3, p2], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
+//
+//        this.jsxObjects = [p1, p2, p3, l1, l2, l3];
+//    };
+//
+//    Triangle.prototype.remove = function() {
+//        this.jsxObjects.forEach(function(obj) {
+//            b.removeObject(obj);
+//        });
+//    };
 
 })();
