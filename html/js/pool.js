@@ -86,31 +86,33 @@
     function BoardManager(board) {
         this.board = board;
         this.circles = [];
+        this.triangles = [];
     }
 
     BoardManager.prototype.computeAndAddCircles = function(columns) {
         this.removeAllCircles();
+        this.removeAllTriangles();
         var circles = this.circles;
         // first case - two tangents and one column
-        columns.forEach(function(column) {
-            Array.prototype.push.apply(circles, Computer.computeFirstCase(column));
-        });
-
-        // second case - two columns and tangent
-        var i, j;
-        var column1, column2;
-        if (columns.length > 1) {
-            for (i = 0; i < columns.length; i++) {
-                column1 = columns[i];
-                for (j = i + 1; j < columns.length; j++) {
-                    column2 = columns[j];
-                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR1));
-                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR2));
-                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR3));
-                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR4));
-                }
-            }
-        }
+//        columns.forEach(function(column) {
+//            Array.prototype.push.apply(circles, Computer.computeFirstCase(column));
+//        });
+//
+//        // second case - two columns and tangent
+//        var i, j;
+//        var column1, column2;
+//        if (columns.length > 1) {
+//            for (i = 0; i < columns.length; i++) {
+//                column1 = columns[i];
+//                for (j = i + 1; j < columns.length; j++) {
+//                    column2 = columns[j];
+//                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR1));
+//                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR2));
+//                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR3));
+//                    Array.prototype.push.apply(circles, Computer.computeSecondCase(column1, column2, Transformation.TR4));
+//                }
+//            }
+//        }
 
         Array.prototype.push.apply(circles, Computer.computeThirdCase(columns));
 
@@ -141,6 +143,13 @@
             circle.remove();
         });
         this.circles = [];
+    };
+
+    BoardManager.prototype.removeAllTriangles = function() {
+        this.triangles.forEach(function(triangle) {
+            triangle.remove();
+        });
+        this.triangles = [];
     };
 
     function Computer() {
@@ -327,13 +336,6 @@
         return circles;
     };
 
-    Computer.computeThirdCase = function(columns) {
-        var circles = [];
-
-        return circles;
-    };
-
-
     Computer.isCircleInsideBoundingArea = function(x, y, r) {
         var left = x - r;
         var right = x + r;
@@ -403,6 +405,9 @@
     Column.prototype.init = function(coords) {
         var usrX = coords.usrCoords[1];
         var usrY = coords.usrCoords[2];
+        this.x = usrX;
+        this.y = usrY;
+
         var center = b.create('point', [usrX, usrY], {fixed: true, name: '', fillColor: '#000000', strokeColor: '#000000'});
         var right = b.create('point', [usrX + Column.RADIUS, usrY], {fixed: true, visible: false});
         var column = b.create('circle', [center, right], {fillColor: '#20b2aa', fillOpacity: 0.5});
@@ -440,11 +445,11 @@
     };
 
     Column.prototype.X = function() {
-        return this.column.center.X();
+        return this.x;
     };
 
     Column.prototype.Y = function() {
-        return this.column.center.Y();
+        return this.y;
     };
 
     Column.RADIUS = 5;
@@ -486,12 +491,158 @@
         var center = b.create('point', [x, y], Circle.DEFAULT_CENTER_POINT_CONFIG);
         var right = b.create('point', [x + r, y], Circle.DEFAULT_POINT_CONFIG);
         var circle = b.create('circle', [center, right], config);
+        this.center = center;
+        this.right = right;
         this.circle = circle;
     };
 
     Circle.prototype.remove = function() {
+        b.removeObject(this.center);
+        b.removeObject(this.right);
         b.removeObject(this.circle);
     };
 
+
+    Computer.computeThirdCase = function(columns) {
+        var circles = [];
+//        if (columns.length < 3) {
+//            return circles;
+//        }
+
+        var delaunay = new Delaunay(columns);
+        var triangles = delaunay.getTriangles();
+        triangles.forEach(function(triangle) {
+            triangle.draw();
+        });
+
+        boardManager.triangles = triangles;
+
+        return circles;
+    };
+
+    //**** Delaunay triangulation
+    function Delaunay(columns) {
+        this.init(columns);
+    }
+
+    Delaunay.prototype.init = function(columns) {
+        this.columns = columns;
+        this.triangles = [];
+        this.createCache();
+        this.createFirstTwoTriangles();
+    };
+
+    Delaunay.prototype.getTriangles = function() {
+        this.createTriangulation();
+        return this.triangles;
+    };
+
+    Delaunay.prototype.createTriangulation = function() {
+        var columns = this.columns;
+
+        var nextColumn;
+        for (var i = 0; i < columns.length; i++) {
+            nextColumn = columns[i];
+            this.addPoint(nextColumn);
+        }
+    };
+
+    Delaunay.prototype.addPoint = function(column) {
+        var point = new Point(column.X(), column.Y());
+        var triangleAndIndex = this.getTriangleAndIndexByPoint(point);
+        var triangle = triangleAndIndex[0];
+        this.recreateTriangles(triangle);
+    };
+
+    Delaunay.prototype.recreateTriangles = function(triangle) {
+
+    };
+
+    Delaunay.prototype.getTriangleAndIndexByPoint = function(point) {
+        var triangle;
+        for (var i = 0; i < this.triangles.length; i++) {
+            triangle = this.triangles[i];
+            if (triangle.pointInsideTriangle(point)) {
+                return [triangle, i];
+            }
+        }
+        return [null, -1];
+    };
+
+    Delaunay.prototype.createCache = function() {
+
+    };
+
+    Delaunay.prototype.createFirstTwoTriangles = function() {
+        // create first two triangles
+        // points
+        var A = new Point(0, 0);
+        var B = new Point(WIDTH, 0);
+        var C = new Point(WIDTH, HEIGHT);
+        var D = new Point(0, HEIGHT);
+
+        var tr1 = new Triangle(A, C, B);
+        var tr2 = new Triangle(A, D, C);
+        tr1.setNeighbours(null, null, tr2);
+        tr2.setNeighbours(null, tr1, null);
+        this.triangles.push(tr1);
+        this.triangles.push(tr2);
+    };
+
+
+    function Point(x, y) {
+        this.x = x;
+        this.y = y;
+        this.coords = [x, y];
+    }
+
+    function Edge(p1, p2) {
+        this.p1 = p1;
+        this.p2 = p2;
+    }
+
+    // always in ccw order
+    function Triangle(p1, p2, p3) {
+        this.p1 = p1;
+        this.p2 = p2;
+        this.p3 = p3;
+        this.points = [p1, p2, p3];
+        this.neighbours = [];
+        this.jsxObjects = [];
+    }
+
+    Triangle.prototype.pointInsideTriangle = function(p) {
+        var a = (this.p1.x - p.x)*(this.p2.y - this.p1.y) - (this.p2.x - this.p1.x)*(this.p1.y - p.y);
+        var b = (this.p2.x - p.x)*(this.p3.y - this.p2.y) - (this.p3.x - this.p2.x)*(this.p2.y - p.y);
+        var c = (this.p3.x - p.x)*(this.p1.y - this.p3.y) - (this.p1.x - this.p3.x)*(this.p3.y - p.y);
+
+        if ((a <= 0 && b <= 0 && c <= 0) || (a >= 0 && b >= 0 && c >= 0)) {
+            return true;
+        }
+
+        return false;
+    };
+
+    Triangle.prototype.setNeighbours = function(tr1, tr2, tr3) {
+        this.neighbours = [tr1, tr2, tr3];
+    };
+
+    Triangle.prototype.draw = function() {
+        var p1 = b.create('point', this.p1.coords, {fixed: true, name: '', visible: false});
+        var p2 = b.create('point', this.p2.coords, {fixed: true, name: '', visible: false});
+        var p3 = b.create('point', this.p3.coords, {fixed: true, name: '', visible: false});
+
+        var l1 = b.create('line', [p1, p2], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
+        var l2 = b.create('line', [p1, p3], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
+        var l3 = b.create('line', [p3, p2], {straightFirst:false, straightLast:false, strokeWidth: 0.5, strokeColor: '#a52a2a'});
+
+        this.jsxObjects = [p1, p2, p3, l1, l2, l3];
+    };
+
+    Triangle.prototype.remove = function() {
+        this.jsxObjects.forEach(function(obj) {
+            b.removeObject(obj);
+        });
+    };
 
 })();
